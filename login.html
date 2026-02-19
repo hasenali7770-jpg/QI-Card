@@ -11,10 +11,10 @@
 
 <script>
   if (localStorage.getItem("qicard_kb_logged_in") === "1") {
-    window.location.href = "dashboard.html";
+    window.location.href = window.location.origin + "/QI-Card/dashboard.html";
   }
 </script>
-
+  
 <!-- Tech Background -->
 <canvas id="techCanvas"></canvas>
 <script src="bg-tech.js"></script>
@@ -87,3 +87,4 @@
   <script src="login.js"></script>
 </body>
 </html>
+
