@@ -1,5 +1,6 @@
 // ===== إعدادات السيرفر =====
-const API_BASE = "https://qi-0odh.onrender.com";
+// ✅ هذا هو رابط Render الجديد حسب اللوجات عندك
+const API_BASE = "https://qi-card.onrender.com";
 
 // عناصر الصفحة
 const emailInput = document.getElementById("emailInput");
@@ -19,6 +20,22 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+// ✅ اسم مشروعك على GitHub Pages (Repo name)
+const GH_PAGES_REPO = "QI-Card";
+
+// يبني رابط الداشبورد بشكل صحيح سواء كنت على GitHub Pages أو Local
+function getDashboardUrl() {
+  const { hostname, origin } = window.location;
+
+  // إذا كنت على GitHub Pages
+  if (hostname.endsWith("github.io")) {
+    return `${origin}/${GH_PAGES_REPO}/dashboard.html`;
+  }
+
+  // إذا Local / أي هوست ثاني
+  return `${origin}/dashboard.html`;
+}
+
 /* =========================
    إرسال كود التحقق
 ========================= */
@@ -29,7 +46,6 @@ sendCodeBtn.addEventListener("click", async () => {
     return setMsg("أدخل البريد الإلكتروني.", "error");
   }
 
-  // ✅ ملاحظة: فحص الدومين صار بالسيرفر فقط (أمان أعلى)
   sendCodeBtn.disabled = true;
   setMsg("جاري إرسال رمز التحقق...", "");
 
@@ -37,14 +53,13 @@ sendCodeBtn.addEventListener("click", async () => {
     const res = await fetch(`${API_BASE}/api/auth/send-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email })
+      body: JSON.stringify({ email }),
     });
 
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.success) {
-      setMsg(data.message || "فشل إرسال الرمز.", "error");
-      return;
+      return setMsg(data.message || `فشل إرسال الرمز (HTTP ${res.status})`, "error");
     }
 
     codeBox.classList.remove("hidden");
@@ -55,7 +70,12 @@ sendCodeBtn.addEventListener("click", async () => {
       localStorage.setItem("qicard_session_id", data.sessionId);
     }
   } catch (err) {
-    setMsg("تعذر الاتصال بالسيرفر.", "error");
+    // ✅ تشخيص أوضح للمشكلة
+    setMsg(
+      "تعذر الاتصال بالسيرفر. تأكد أن API_BASE صحيح وأن السيرفر شغال (Render قد يكون نايم).",
+      "error"
+    );
+    console.error("Send code error:", err);
   } finally {
     sendCodeBtn.disabled = false;
   }
@@ -84,28 +104,32 @@ verifyBtn.addEventListener("click", async () => {
     const res = await fetch(`${API_BASE}/api/auth/verify-code`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, code, sessionId })
+      body: JSON.stringify({ email, code, sessionId }),
     });
 
     const data = await res.json().catch(() => ({}));
 
     if (!res.ok || !data.success) {
-      setMsg(data.message || "رمز غير صحيح.", "error");
-      return;
+      return setMsg(data.message || `رمز غير صحيح (HTTP ${res.status})`, "error");
     }
 
+    // ✅ تسجيل الدخول
     localStorage.setItem("qicard_kb_logged_in", "1");
     if (data.token) localStorage.setItem("qicard_token", data.token);
 
     setMsg("تم تسجيل الدخول بنجاح ✅", "success");
 
+    // ✅ تحويل صحيح للداشبورد حسب بيئتك
     setTimeout(() => {
-      window.location.href = window.location.origin + "/QI/dashboard.html";
+      window.location.href = getDashboardUrl();
     }, 600);
   } catch (err) {
-    setMsg("تعذر الاتصال بالسيرفر.", "error");
+    setMsg(
+      "تعذر الاتصال بالسيرفر أثناء التحقق. افتح /health وتأكد أنه يعمل.",
+      "error"
+    );
+    console.error("Verify code error:", err);
   } finally {
     verifyBtn.disabled = false;
   }
 });
-
