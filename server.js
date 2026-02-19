@@ -3,25 +3,72 @@ const cors = require("cors");
 const jwt = require("jsonwebtoken");
 
 const app = express();
-app.use(cors({ origin: "*" }));
-app.use(express.json());
 
 // ===================== إعدادات =====================
 const PORT = process.env.PORT || 3000;
-const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_TO_A_LONG_RANDOM_SECRET";
+const JWT_SECRET = process.env.JWT_SECRET; // ✅ لازم من Render Env
 const CODE_TTL_MS = 10 * 60 * 1000; // 10 دقائق
-
-// ✅ يسمح فقط ببريد الشركة
 const ALLOWED_DOMAIN = "@qi.iq";
 
-// تخزين مؤقت: sessionId -> { email, code, expiresAt, attempts }
+// ✅ Origins مسموحة (GitHub Pages + Local)
+const ALLOWED_ORIGINS = [
+  "https://hasenali7770-jpg.github.io",
+  "http://localhost:5500",
+  "http://127.0.0.1:5500",
+];
+
+// ===================== Middlewares =====================
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      // requests بدون Origin (مثل curl/health) نخليها تمر
+      if (!origin) return callback(null, true);
+
+      // سماح لجيتهب بيدجز (أي ريبوزيتوري)
+      if (origin === "https://hasenali7770-jpg.github.io") return callback(null, true);
+
+      // سماح للوكال
+      if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true);
+
+      // غير مسموح
+      return callback(new Error("Not allowed by CORS"));
+    },
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+    credentials: false,
+  })
+);
+
+// ✅ مهم للـ preflight
+app.options("*", cors());
+
+app.use(express.json());
+
+// ✅ تحذير إذا JWT_SECRET مو مضبوط
+if (!JWT_SECRET) {
+  console.warn("⚠️ JWT_SECRET is not set. Add it in Render Environment Variables.");
+}
+
+// ===================== تخزين مؤقت =====================
+// sessionId -> { email, code, expiresAt, attempts }
 const sessions = new Map();
 
-// تنظيف الجلسات المنتهية
+// IP rate-limit بسيط لـ send-code
+// ip -> { count, resetAt }
+const ipLimits = new Map();
+const LIMIT_WINDOW_MS = 5 * 60 * 1000; // 5 دقائق
+const LIMIT_MAX = 10;
+
+// تنظيف كل دقيقة
 setInterval(() => {
   const now = Date.now();
+
   for (const [sid, s] of sessions.entries()) {
     if (!s || s.expiresAt <= now) sessions.delete(sid);
+  }
+
+  for (const [ip, v] of ipLimits.entries()) {
+    if (!v || v.resetAt <= now) ipLimits.delete(ip);
   }
 }, 60 * 1000);
 
@@ -38,6 +85,13 @@ function normalizeEmail(email) {
   return String(email || "").trim().toLowerCase();
 }
 
+function getClientIp(req) {
+  // Render عادة يحط ip الحقيقي بالـ x-forwarded-for
+  const xf = req.headers["x-forwarded-for"];
+  if (xf) return String(xf).split(",")[0].trim();
+  return req.socket?.remoteAddress || "unknown";
+}
+
 // ===================== Routes =====================
 
 // فحص السيرفر
@@ -52,6 +106,7 @@ app.get("/health", (req, res) => {
 // إرسال رمز التحقق
 app.post("/api/auth/send-code", (req, res) => {
   const email = normalizeEmail(req.body?.email);
+  const ip = getClientIp(req);
 
   if (!email) {
     return res.status(400).json({ success: false, message: "البريد مطلوب" });
@@ -61,6 +116,23 @@ app.post("/api/auth/send-code", (req, res) => {
     return res.status(403).json({
       success: false,
       message: `يسمح فقط ببريد الشركة (${ALLOWED_DOMAIN})`,
+    });
+  }
+
+  // ✅ Rate limit بسيط
+  const now = Date.now();
+  const lim = ipLimits.get(ip) || { count: 0, resetAt: now + LIMIT_WINDOW_MS };
+  if (lim.resetAt <= now) {
+    lim.count = 0;
+    lim.resetAt = now + LIMIT_WINDOW_MS;
+  }
+  lim.count += 1;
+  ipLimits.set(ip, lim);
+
+  if (lim.count > LIMIT_MAX) {
+    return res.status(429).json({
+      success: false,
+      message: "طلبات كثيرة، حاول بعد قليل.",
     });
   }
 
@@ -114,6 +186,13 @@ app.post("/api/auth/verify-code", (req, res) => {
   }
 
   sessions.delete(sessionId);
+
+  if (!JWT_SECRET) {
+    return res.status(500).json({
+      success: false,
+      message: "JWT_SECRET غير مضبوط على السيرفر (Render Env).",
+    });
+  }
 
   const token = jwt.sign({ email, app: "qicard-kb" }, JWT_SECRET, {
     expiresIn: "12h",
